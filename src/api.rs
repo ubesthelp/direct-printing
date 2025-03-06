@@ -3,7 +3,7 @@ use poem::{error::InternalServerError, Result};
 use poem_openapi::{
   param::Path,
   payload::Json,
-  types::{ParseFromJSON, ToJSON},
+  types::{Base64, ParseFromJSON, ToJSON},
   Enum, Object, OpenApi, Tags,
 };
 use winprint::{
@@ -86,7 +86,7 @@ struct PageSize {
 }
 
 /// 打印机能力
-#[derive(Default, Object)]
+#[derive(Object)]
 #[oai(skip_serializing_if_is_none)]
 struct PrinterCapability {
   /// 最大打印份数
@@ -95,6 +95,20 @@ struct PrinterCapability {
   orientations: Option<Vec<Orientation>>,
   /// 纸张大小
   page_sizes: Option<Vec<PageSize>>,
+}
+
+/// 打印负载
+#[derive(Object)]
+#[oai(skip_serializing_if_is_none)]
+struct PrintPayload {
+  /// 要打印的 PDF 文件内容
+  file: Base64<Vec<u8>>,
+  /// 打印份数
+  copies: Option<u16>,
+  /// 布局
+  orientation: Option<Orientation>,
+  /// 纸张大小
+  page_size: Option<PageSize>,
 }
 
 #[derive(Tags)]
@@ -134,6 +148,12 @@ impl Api {
     } else {
       Ok(Response::err("No such printer"))
     }
+  }
+
+  /// 打印 PDF 文件
+  #[oai(path = "/print", method = "post")]
+  async fn print(&self, payload: Json<PrintPayload>) -> Result<Json<Response<String>>> {
+    Ok(Response::ok("ok".to_string()))
   }
 }
 
