@@ -20,7 +20,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> tokio::io::Result<()> {
   let args = Args::parse();
 
   pretty_env_logger::init();
@@ -50,5 +50,5 @@ async fn main() {
     info!("The specification is served on {}/spec", server);
   }
 
-  let _ = Server::new(TcpListener::bind(addr)).run(app).await;
+  Server::new(TcpListener::bind(addr)).run(app).await
 }
