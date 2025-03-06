@@ -1,17 +1,37 @@
 use api::Api;
+use clap::Parser;
+use log::info;
 use poem::{listener::TcpListener, Route, Server};
 use poem_openapi::OpenApiService;
 
 mod api;
 
+/// Direct Printing
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+  /// The host to listen
+  #[arg(long, default_value = "127.0.0.1")]
+  host: String,
+
+  /// The port to listen
+  #[arg(short, long, default_value_t = 63856)]
+  port: u16,
+}
+
 #[tokio::main]
 async fn main() {
+  let args = Args::parse();
+
   pretty_env_logger::init();
+
+  let addr = format!("{}:{}", args.host, args.port);
+  let server = format!("http://{}", addr);
 
   let api_service = OpenApiService::new(Api, "Direct Printing", "0.1")
     .summary("直接打印 API")
     .description("可从 web 直接调用的打印 API。")
-    .server("http://127.0.0.1:63856");
+    .server(&server);
 
   #[cfg(feature = "with-ui")]
   let ui = api_service.swagger_ui();
@@ -23,7 +43,12 @@ async fn main() {
   #[cfg(feature = "with-ui")]
   let app = app.nest("/", ui).nest("/spec", spec);
 
-  let _ = Server::new(TcpListener::bind("127.0.0.1:63856"))
-    .run(app)
-    .await;
+  info!("The API is served on {}/api", server);
+  #[cfg(feature = "with-ui")]
+  {
+    info!("The documentation is served on {}/", server);
+    info!("The specification is served on {}/spec", server);
+  }
+
+  let _ = Server::new(TcpListener::bind(addr)).run(app).await;
 }
