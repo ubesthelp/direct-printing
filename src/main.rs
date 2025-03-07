@@ -1,3 +1,5 @@
+use std::fs::write;
+
 use api::Api;
 use clap::Parser;
 use log::info;
@@ -17,6 +19,14 @@ struct Args {
   /// The port to listen
   #[arg(short, long, default_value_t = 63856)]
   port: u16,
+
+  /// Save the OpenAPI specification into a JSON file
+  #[arg(long, value_name = "FILE")]
+  json: Option<String>,
+
+  /// Save the OpenAPI specification into a YAML file
+  #[arg(long, value_name = "FILE")]
+  yaml: Option<String>,
 }
 
 #[tokio::main]
@@ -33,22 +43,28 @@ async fn main() -> tokio::io::Result<()> {
     .description("可从 web 直接调用的打印 API。")
     .server(&server);
 
-  #[cfg(feature = "with-ui")]
-  let ui = api_service.swagger_ui();
-  #[cfg(feature = "with-ui")]
-  let spec = api_service.spec_endpoint_yaml();
+  if let Some(json) = args.json {
+    write(json, api_service.spec())
+  } else if let Some(yaml) = args.yaml {
+    write(yaml, api_service.spec_yaml())
+  } else {
+    #[cfg(feature = "with-ui")]
+    let ui = api_service.swagger_ui();
+    #[cfg(feature = "with-ui")]
+    let spec = api_service.spec_endpoint_yaml();
 
-  let app = Route::new().nest("/api", api_service);
+    let app = Route::new().nest("/api", api_service);
 
-  #[cfg(feature = "with-ui")]
-  let app = app.nest("/", ui).nest("/spec", spec);
+    #[cfg(feature = "with-ui")]
+    let app = app.nest("/", ui).nest("/spec", spec);
 
-  info!("The API is served on {}", server);
-  #[cfg(feature = "with-ui")]
-  {
-    info!("The documentation is served on http://{}/", addr);
-    info!("The specification is served on http://{}/spec", addr);
+    info!("The API is served on {}", server);
+    #[cfg(feature = "with-ui")]
+    {
+      info!("The documentation is served on http://{}/", addr);
+      info!("The specification is served on http://{}/spec", addr);
+    }
+
+    Server::new(TcpListener::bind(addr)).run(app).await
   }
-
-  Server::new(TcpListener::bind(addr)).run(app).await
 }
