@@ -1,4 +1,7 @@
-use log::debug;
+use std::io::Write;
+
+use anyhow::bail;
+use log::{debug, error};
 use poem::{error::InternalServerError, Result};
 use poem_openapi::{
   param::Path,
@@ -6,11 +9,12 @@ use poem_openapi::{
   types::{Base64, ParseFromJSON, ToJSON},
   Enum, Object, OpenApi, Tags,
 };
+use tempfile::NamedTempFile;
 use winprint::{
-  printer::PrinterDevice,
+  printer::{FilePrinter, PdfiumPrinter, PrinterDevice},
   ticket::{
-    FeatureOptionPack, FeatureOptionPackWithPredefined, PredefinedPageOrientation,
-    PrintCapabilities,
+    Copies, FeatureOptionPack, FeatureOptionPackWithPredefined, PredefinedPageOrientation,
+    PrintCapabilities, PrintTicketBuilder,
   },
 };
 
@@ -73,6 +77,17 @@ impl From<PredefinedPageOrientation> for Orientation {
   }
 }
 
+impl From<&Orientation> for PredefinedPageOrientation {
+  fn from(value: &Orientation) -> Self {
+    match value {
+      Orientation::Portrait => PredefinedPageOrientation::Portrait,
+      Orientation::Landscape => PredefinedPageOrientation::Landscape,
+      Orientation::ReversePortrait => PredefinedPageOrientation::ReversePortrait,
+      Orientation::ReverseLandscape => PredefinedPageOrientation::ReverseLandscape,
+    }
+  }
+}
+
 /// 纸张大小
 #[derive(Object)]
 #[oai(skip_serializing_if_is_none)]
@@ -103,6 +118,8 @@ struct PrinterCapability {
 struct PrintPayload {
   /// 要打印的 PDF 文件内容
   file: Base64<Vec<u8>>,
+  /// 要使用的打印机名称
+  printer: String,
   /// 打印份数
   copies: Option<u16>,
   /// 布局
@@ -153,7 +170,14 @@ impl Api {
   /// 打印 PDF 文件
   #[oai(path = "/print", method = "post")]
   async fn print(&self, payload: Json<PrintPayload>) -> Result<Json<Response<String>>> {
-    Ok(Response::ok("ok".to_string()))
+    let result = print_file(&payload);
+
+    if let Err(e) = result {
+      error!("Print error: {:#?}", e);
+      Ok(Response::err(format!("Failed to print: {}", e.to_string())))
+    } else {
+      Ok(Response::ok("ok".to_string()))
+    }
   }
 }
 
@@ -179,7 +203,10 @@ fn get_page_sizes(cap: &PrintCapabilities) -> Option<Vec<PageSize>> {
     .map(|pms| {
       let s = pms.size();
       PageSize {
-        name: pms.display_name().map(|s| s.to_string()),
+        name: pms
+          .display_name()
+          // 安装 Gprinter GP-1134T 打印驱动发现纸张大小有“&#xEB;米”字样，不知道怎么来的
+          .map(|s| s.replace("&#xEB;米", "毫米").to_string()),
         width: s.width_in_micron(),
         height: s.height_in_micron(),
       }
@@ -191,4 +218,70 @@ fn get_page_sizes(cap: &PrintCapabilities) -> Option<Vec<PageSize>> {
   } else {
     Some(sizes)
   }
+}
+
+fn print_file(payload: &PrintPayload) -> anyhow::Result<()> {
+  // 查找打印机
+  let printers = PrinterDevice::all()?;
+  let printer = printers
+    .iter()
+    .find(|p| p.name().replace("&#xEB;米", "毫米") == payload.printer);
+
+  if printer.is_none() {
+    bail!("No such printer");
+  }
+
+  // 应用打印设置
+  let printer = printer.unwrap();
+  let cap = PrintCapabilities::fetch(printer)?;
+  let mut builder = PrintTicketBuilder::new(printer)?;
+
+  // 份数
+  if let Some(copies) = payload.copies {
+    builder.merge(Copies(copies))?;
+  }
+
+  // 布局
+  if let Some(ori) = &payload.orientation {
+    let predefined = Some(ori.into());
+    let ori = cap
+      .page_orientations()
+      .find(|x| x.as_predefined_name() == predefined);
+
+    if let Some(ori) = ori {
+      builder.merge(ori)?;
+    } else {
+      bail!("No such orientation");
+    }
+  }
+
+  // 纸张大小
+  if let Some(page_size) = &payload.page_size {
+    let page = if let Some(name) = &page_size.name {
+      let name = Some(name.as_str());
+      cap.page_media_sizes().find(|x| x.display_name() == name)
+    } else {
+      cap.page_media_sizes().find(|x| {
+        let size = x.size();
+        size.width_in_micron() == page_size.width && size.height_in_micron() == page_size.height
+      })
+    };
+
+    if let Some(page) = page {
+      builder.merge(page)?;
+    } else {
+      bail!("No such page size");
+    }
+  }
+
+  // 保存临时文件
+  let mut file = NamedTempFile::new()?;
+  file.write_all(&payload.file)?;
+
+  // 打印
+  let ticket = builder.build()?;
+  let pdf = PdfiumPrinter::new(printer.clone());
+  pdf.print(file.path(), ticket)?;
+
+  Ok(())
 }

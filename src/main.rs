@@ -26,7 +26,7 @@ async fn main() -> tokio::io::Result<()> {
   pretty_env_logger::init();
 
   let addr = format!("{}:{}", args.host, args.port);
-  let server = format!("http://{}", addr);
+  let server = format!("http://{}/api", addr);
 
   let api_service = OpenApiService::new(Api, "Direct Printing", "0.1")
     .summary("直接打印 API")
@@ -43,11 +43,11 @@ async fn main() -> tokio::io::Result<()> {
   #[cfg(feature = "with-ui")]
   let app = app.nest("/", ui).nest("/spec", spec);
 
-  info!("The API is served on {}/api", server);
+  info!("The API is served on {}", server);
   #[cfg(feature = "with-ui")]
   {
-    info!("The documentation is served on {}/", server);
-    info!("The specification is served on {}/spec", server);
+    info!("The documentation is served on http://{}/", addr);
+    info!("The specification is served on http://{}/spec", addr);
   }
 
   Server::new(TcpListener::bind(addr)).run(app).await
