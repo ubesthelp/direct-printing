@@ -39,7 +39,6 @@ async fn main() -> tokio::io::Result<()> {
   let server = format!("http://{}/api", addr);
 
   let api_service = OpenApiService::new(Api, "Direct Printing", "0.1")
-    .summary("直接打印 API")
     .description("可从 web 直接调用的打印 API。")
     .server(&server);
 

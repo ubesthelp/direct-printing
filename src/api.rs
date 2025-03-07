@@ -139,14 +139,14 @@ pub struct Api;
 #[OpenApi(tag = "ApiTag::Printing")]
 impl Api {
   /// 获取全部可用打印机名称列表。
-  #[oai(path = "/printers", method = "get")]
+  #[oai(path = "/printers", method = "get", operation_id = "getPrinters")]
   async fn get_printers(&self) -> Json<Response<Vec<String>>> {
     let printers = PrinterDevice::all().unwrap_or_default();
     Response::ok(printers.iter().map(|p| p.name().to_string()).collect())
   }
 
   /// 获取指定打印机能力。
-  #[oai(path = "/printers/:name", method = "get")]
+  #[oai(path = "/printers/:name", method = "get", operation_id = "getPrinter")]
   async fn get_printer(&self, name: Path<String>) -> Result<Json<Response<PrinterCapability>>> {
     let printers = PrinterDevice::all().unwrap_or_default();
     let printer = printers.iter().find(|p| p.name() == name.0);
@@ -168,7 +168,7 @@ impl Api {
   }
 
   /// 打印 PDF 文件
-  #[oai(path = "/print", method = "post")]
+  #[oai(path = "/print", method = "post", operation_id = "print")]
   async fn print(&self, payload: Json<PrintPayload>) -> Result<Json<Response<String>>> {
     let result = print_file(&payload);
 
