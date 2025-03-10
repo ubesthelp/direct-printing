@@ -3,7 +3,7 @@ use std::fs::write;
 use api::Api;
 use clap::Parser;
 use log::info;
-use poem::{listener::TcpListener, EndpointExt, Route, Server};
+use poem::{http::Method, listener::TcpListener, middleware::Cors, EndpointExt, Route, Server};
 use poem_openapi::OpenApiService;
 
 #[cfg(feature = "with-ui")]
@@ -64,6 +64,12 @@ async fn main() -> tokio::io::Result<()> {
       .nest("/spec", spec)
       .with(Tracing)
       .with(RequestId::default().reuse_id(ReuseId::Use));
+
+    let app = app.with(
+      Cors::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_credentials(false),
+    );
 
     info!("The API is served on {}", server);
     #[cfg(feature = "with-ui")]
