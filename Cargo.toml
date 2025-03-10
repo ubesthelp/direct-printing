@@ -1,8 +1,11 @@
 [package]
 name = "direct-printing"
+description = "Direct Printing Agent"
 version = "0.1.0"
 edition = "2021"
+author = "ubesthelp"
 license = "GPL-3.0-or-later"
+build = "build.rs"
 
 [dependencies]
 anyhow = "1.0.97"
@@ -10,11 +13,25 @@ clap = { version = "4.5.31", features = ["derive"] }
 log = "0.4.26"
 poem = "3.1.7"
 poem-openapi = { version = "5.1.8", features = ["sonic-rs"] }
-pretty_env_logger = "0.5.0"
 tempfile = "3.18.0"
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"], optional = true }
 winprint = "0.2.0"
 
 [features]
 default = ["with-ui"]
-with-ui = ["poem-openapi/swagger-ui"]
+with-ui = ["poem/requestid", "poem-openapi/swagger-ui", "tracing-subscriber"]
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
+[package.metadata.winres]
+LegalCopyright = "© 2025 ubesthelp. All rights reserved."
+FileDescription = "Direct Printing Agent"
+OriginalFilename = "direct-printing.exe"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
+panic = "abort"

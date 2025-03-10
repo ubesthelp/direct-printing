@@ -3,8 +3,11 @@ use std::fs::write;
 use api::Api;
 use clap::Parser;
 use log::info;
-use poem::{listener::TcpListener, Route, Server};
+use poem::{listener::TcpListener, EndpointExt, Route, Server};
 use poem_openapi::OpenApiService;
+
+#[cfg(feature = "with-ui")]
+use poem::middleware::{RequestId, ReuseId, Tracing};
 
 mod api;
 
@@ -33,7 +36,8 @@ struct Args {
 async fn main() -> tokio::io::Result<()> {
   let args = Args::parse();
 
-  pretty_env_logger::init();
+  #[cfg(feature = "with-ui")]
+  tracing_subscriber::fmt::init();
 
   let addr = format!("{}:{}", args.host, args.port);
   let server = format!("http://{}/api", addr);
@@ -55,7 +59,11 @@ async fn main() -> tokio::io::Result<()> {
     let app = Route::new().nest("/api", api_service);
 
     #[cfg(feature = "with-ui")]
-    let app = app.nest("/", ui).nest("/spec", spec);
+    let app = app
+      .nest("/", ui)
+      .nest("/spec", spec)
+      .with(Tracing)
+      .with(RequestId::default().reuse_id(ReuseId::Use));
 
     info!("The API is served on {}", server);
     #[cfg(feature = "with-ui")]
