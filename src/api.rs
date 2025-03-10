@@ -1,6 +1,7 @@
-use std::io::Write;
+use std::{fs::read_to_string, io::Write, path::PathBuf};
 
 use anyhow::bail;
+use directories::ProjectDirs;
 use log::{debug, error};
 use poem::{error::InternalServerError, Result};
 use poem_openapi::{
@@ -55,7 +56,7 @@ where
 }
 
 /// 布局
-#[derive(Enum)]
+#[derive(Debug, Enum)]
 #[oai(rename_all = "snake_case")]
 enum Orientation {
   /// 纵向
@@ -89,7 +90,7 @@ impl From<&Orientation> for PredefinedPageOrientation {
 }
 
 /// 纸张大小
-#[derive(Object)]
+#[derive(Debug, Object)]
 #[oai(skip_serializing_if_is_none)]
 struct PageSize {
   /// 名称
@@ -112,12 +113,10 @@ struct PrinterCapability {
   page_sizes: Option<Vec<PageSize>>,
 }
 
-/// 打印负载
-#[derive(Object)]
+/// 打印设置
+#[derive(Debug, Object)]
 #[oai(skip_serializing_if_is_none)]
-struct PrintPayload {
-  /// 要打印的 PDF 文件内容
-  file: Base64<Vec<u8>>,
+struct PrintSettings {
   /// 要使用的打印机名称
   printer: String,
   /// 打印份数
@@ -126,6 +125,16 @@ struct PrintPayload {
   orientation: Option<Orientation>,
   /// 纸张大小
   page_size: Option<PageSize>,
+}
+
+/// 打印负载
+#[derive(Object)]
+#[oai(skip_serializing_if_is_none)]
+struct PrintPayload {
+  /// 要打印的 PDF 文件内容
+  file: Base64<Vec<u8>>,
+  /// 打印设置
+  settings: PrintSettings,
 }
 
 #[derive(Tags)]
@@ -164,6 +173,24 @@ impl Api {
       Ok(Response::ok(pcap))
     } else {
       Ok(Response::err("No such printer"))
+    }
+  }
+
+  /// 获取默认打印设置
+  #[oai(
+    path = "/settings",
+    method = "get",
+    operation_id = "getDefaultSettings"
+  )]
+  async fn get_default_settings(&self) -> Result<Json<Response<PrintSettings>>> {
+    if let Some(filepath) = get_settings_filepath() {
+      if let Ok(settings) = read_settings(filepath) {
+        Ok(Response::ok(settings))
+      } else {
+        Ok(Response::err("No default settings"))
+      }
+    } else {
+      Ok(Response::err("No default settings"))
     }
   }
 
@@ -225,7 +252,7 @@ fn print_file(payload: &PrintPayload) -> anyhow::Result<()> {
   let printers = PrinterDevice::all()?;
   let printer = printers
     .iter()
-    .find(|p| p.name().replace("&#xEB;米", "毫米") == payload.printer);
+    .find(|p| p.name().replace("&#xEB;米", "毫米") == payload.settings.printer);
 
   if printer.is_none() {
     bail!("No such printer");
@@ -237,12 +264,12 @@ fn print_file(payload: &PrintPayload) -> anyhow::Result<()> {
   let mut builder = PrintTicketBuilder::new(printer)?;
 
   // 份数
-  if let Some(copies) = payload.copies {
+  if let Some(copies) = payload.settings.copies {
     builder.merge(Copies(copies))?;
   }
 
   // 布局
-  if let Some(ori) = &payload.orientation {
+  if let Some(ori) = &payload.settings.orientation {
     let predefined = Some(ori.into());
     let ori = cap
       .page_orientations()
@@ -256,7 +283,7 @@ fn print_file(payload: &PrintPayload) -> anyhow::Result<()> {
   }
 
   // 纸张大小
-  if let Some(page_size) = &payload.page_size {
+  if let Some(page_size) = &payload.settings.page_size {
     let page = if let Some(name) = &page_size.name {
       let name = Some(name.as_str());
       cap.page_media_sizes().find(|x| x.display_name() == name)
@@ -284,4 +311,26 @@ fn print_file(payload: &PrintPayload) -> anyhow::Result<()> {
   pdf.print(file.path(), ticket)?;
 
   Ok(())
+}
+
+fn get_settings_filepath() -> Option<PathBuf> {
+  if let Some(dir) = ProjectDirs::from("com", "ubesthelp", env!("CARGO_PKG_NAME")) {
+    let mut filepath: PathBuf = dir.config_local_dir().to_path_buf();
+    filepath.push("default.json");
+    Some(filepath)
+  } else {
+    None
+  }
+}
+
+fn read_settings(filepath: PathBuf) -> anyhow::Result<PrintSettings> {
+  let json = read_to_string(filepath)?;
+
+  match PrintSettings::parse_from_json_string(&json) {
+    Ok(settings) => Ok(settings),
+    Err(e) => {
+      error!("Failed to parse settings file: {:#?}", e);
+      bail!("Failed to parse settings file: {:#?}", e);
+    }
+  }
 }
