@@ -1,12 +1,12 @@
 use std::{
-  fs::{read_to_string, write},
+  fs::{create_dir_all, read_to_string, write},
   io::Write,
   path::PathBuf,
 };
 
 use anyhow::bail;
 use directories::ProjectDirs;
-use log::{debug, error};
+use log::{debug, error, trace};
 use poem::error::InternalServerError;
 use poem_openapi::{
   param::Path,
@@ -40,9 +40,11 @@ where
 
 impl<T> Response<T>
 where
-  T: ParseFromJSON + ToJSON,
+  T: ParseFromJSON + ToJSON + std::fmt::Debug,
 {
   fn ok(data: T) -> Json<Self> {
+    debug!("OK: {:#?}", data);
+
     Json(Self {
       code: 0,
       msg: None,
@@ -51,9 +53,12 @@ where
   }
 
   fn err(msg: impl ToString) -> Json<Self> {
+    let msg = msg.to_string();
+    debug!("Failed: {}", msg);
+
     Json(Self {
       code: 1,
-      msg: Some(msg.to_string()),
+      msg: Some(msg),
       data: None,
     })
   }
@@ -106,7 +111,7 @@ struct PageSize {
 }
 
 /// 打印机能力
-#[derive(Object)]
+#[derive(Debug, Object)]
 #[oai(skip_serializing_if_is_none)]
 struct PrinterCapability {
   /// 最大打印份数
@@ -156,6 +161,7 @@ impl Api {
   /// 获取全部可用打印机名称列表。
   #[oai(path = "/printers", method = "get", operation_id = "getPrinters")]
   async fn get_printers(&self) -> Json<Response<Vec<String>>> {
+    debug!("Getting printers");
     let printers = PrinterDevice::all().unwrap_or_default();
     Response::ok(printers.iter().map(|p| p.name().to_string()).collect())
   }
@@ -163,12 +169,13 @@ impl Api {
   /// 获取指定打印机能力。
   #[oai(path = "/printers/:name", method = "get", operation_id = "getPrinter")]
   async fn get_printer(&self, name: Path<String>) -> Result<PrinterCapability> {
+    debug!("Getting printer capabilities for {}", name.0);
     let printers = PrinterDevice::all().unwrap_or_default();
     let printer = printers.iter().find(|p| p.name() == name.0);
 
     if let Some(printer) = printer {
       let cap = PrintCapabilities::fetch(printer).map_err(InternalServerError)?;
-      debug!("Printer {}: {:#?}", name.0, cap);
+      trace!("Printer {}: {:#?}", name.0, cap);
 
       let pcap = PrinterCapability {
         max_copies: cap.max_copies().map(|cp| cp.0),
@@ -189,6 +196,8 @@ impl Api {
     operation_id = "getDefaultSettings"
   )]
   async fn get_default_settings(&self) -> Result<PrintSettings> {
+    debug!("Getting default settings");
+
     if let Some(filepath) = get_settings_filepath() {
       if let Ok(settings) = read_settings(filepath) {
         Ok(Response::ok(settings))
@@ -207,6 +216,8 @@ impl Api {
     operation_id = "setDefaultSettings"
   )]
   async fn set_default_settings(&self, payload: Json<PrintSettings>) -> Result<String> {
+    debug!("Setting default settings");
+
     if let Some(filepath) = get_settings_filepath() {
       if let Err(e) = write_settings(filepath, payload.0) {
         error!("Write settings error: {:#?}", e);
@@ -215,16 +226,18 @@ impl Api {
           e.to_string()
         )))
       } else {
-        Ok(Response::err("No default settings"))
+        Ok(Response::ok("ok".to_string()))
       }
     } else {
-      Ok(Response::ok("ok".to_string()))
+      Ok(Response::err("No default settings"))
     }
   }
 
   /// 打印 PDF 文件
   #[oai(path = "/print", method = "post", operation_id = "print")]
   async fn print(&self, payload: Json<PrintPayload>) -> Result<String> {
+    debug!("Printing with {:#?}", payload.settings);
+
     if let Err(e) = print_file(payload.0) {
       error!("Print error: {:#?}", e);
       Ok(Response::err(format!("Failed to print: {}", e.to_string())))
@@ -355,6 +368,7 @@ fn print_file(payload: PrintPayload) -> anyhow::Result<()> {
 fn get_settings_filepath() -> Option<PathBuf> {
   if let Some(dir) = ProjectDirs::from("com", "ubesthelp", env!("CARGO_PKG_NAME")) {
     let mut filepath: PathBuf = dir.config_local_dir().to_path_buf();
+    let _ = create_dir_all(&filepath);
     filepath.push("default.json");
     Some(filepath)
   } else {
